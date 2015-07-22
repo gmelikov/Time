@@ -20,6 +20,11 @@ class DateFormatParser extends StringValueParser {
 
 	const OPT_DATE_FORMAT = 'dateFormat';
 	const OPT_DIGIT_TRANSFORM_TABLE = 'digitTransformTable';
+
+	/**
+	 * Must be a two-dimensional array, the first dimension mapping the month's numbers 1 to 12 to
+	 * arrays of month
+	 */
 	const OPT_MONTH_NAMES = 'monthNames';
 
 	public function __construct( ParserOptions $options = null ) {
@@ -40,9 +45,9 @@ class DateFormatParser extends StringValueParser {
 	 */
 	protected function stringParse( $value ) {
 		$format = $this->getDateFormat();
-		$numberCharacters = $this->getNumberCharacters();
-		$pattern = '';
 		$formatLength = strlen( $format );
+		$numberPattern = '[' . $this->getNumberCharacters() . ']';
+		$pattern = '';
 
 		for ( $p = 0; $p < $formatLength; $p++ ) {
 			$code = $format[$p];
@@ -51,48 +56,40 @@ class DateFormatParser extends StringValueParser {
 				$code .= $format[++$p];
 			}
 
-			if ( preg_match( '/^x[ijkmot]$/', $code ) && $p < $formatLength - 1 ) {
+			if ( preg_match( '<^x[ijkmot]$>', $code ) && $p < $formatLength - 1 ) {
 				$code .= $format[++$p];
 			}
 
 			switch ( $code ) {
 				case 'Y':
-					$pattern .= '(?P<year>[' . $numberCharacters . ']+)\p{Z}*';
+					$pattern .= '(?P<year>' . $numberPattern . '+)\p{Z}*';
 					break;
 				case 'F':
 				case 'm':
 				case 'M':
 				case 'n':
 				case 'xg':
-					$pattern .= '(?P<month>[' . $numberCharacters . ']{1,2}';
-					foreach ( $this->getMonthNames() as $i => $monthNames ) {
-						$pattern .= '|(?P<month' . $i . '>'
-							. implode( '|', array_map(
-								function( $monthName ) {
-									return preg_quote( $monthName, '/' );
-								}, $monthNames
-							) )
-							. ')';
-					}
-					$pattern .= ')\p{P}*\p{Z}*';
+					$pattern .= '(?P<month>' . $numberPattern . '{1,2}'
+						. $this->getMonthNamesPattern()
+						. ')\p{P}*\p{Z}*';
 					break;
 				case 'd':
 				case 'j':
-					$pattern .= '(?P<day>[' . $numberCharacters . ']{1,2})\p{P}*\p{Z}*';
+					$pattern .= '(?P<day>' . $numberPattern . '{1,2})\p{P}*\p{Z}*';
 					break;
 				case 'G':
 				case 'H':
-					$pattern .= '(?P<hour>[' . $numberCharacters . ']{1,2})\p{Z}*';
+					$pattern .= '(?P<hour>' . $numberPattern . '{1,2})\p{Z}*';
 					break;
 				case 'i':
-					$pattern .= '(?P<minute>[' . $numberCharacters . ']{1,2})\p{Z}*';
+					$pattern .= '(?P<minute>' . $numberPattern . '{1,2})\p{Z}*';
 					break;
 				case 's':
-					$pattern .= '(?P<second>[' . $numberCharacters . ']{1,2})\p{Z}*';
+					$pattern .= '(?P<second>' . $numberPattern . '{1,2})\p{Z}*';
 					break;
 				case '\\':
 					if ( $p < $formatLength - 1 ) {
-						$pattern .= preg_quote( $format[++$p], '/' );
+						$pattern .= preg_quote( $format[++$p] );
 					} else {
 						$pattern .= '\\';
 					}
@@ -100,7 +97,7 @@ class DateFormatParser extends StringValueParser {
 				case '"':
 					$endQuote = strpos( $format, '"', $p + 1 );
 					if ( $endQuote !== false ) {
-						$pattern .= preg_quote( substr( $format, $p + 1, $endQuote - $p - 1 ), '/' );
+						$pattern .= preg_quote( substr( $format, $p + 1, $endQuote - $p - 1 ) );
 						$p = $endQuote;
 					} else {
 						$pattern .= '"';
@@ -111,23 +108,21 @@ class DateFormatParser extends StringValueParser {
 					// We can ignore raw and raw toggle when parsing
 					break;
 				default:
-					if ( preg_match( '/^\p{P}+$/u', $format[$p] ) ) {
+					if ( preg_match( '<^\p{P}+$>u', $format[$p] ) ) {
 						$pattern .= '\p{P}*';
-					} elseif ( preg_match( '/^\p{Z}+$/u', $format[$p] ) ) {
+					} elseif ( preg_match( '<^\p{Z}+$>u', $format[$p] ) ) {
 						$pattern .= '\p{Z}*';
 					} else {
-						$pattern .= preg_quote( $format[$p], '/' );
+						$pattern .= preg_quote( $format[$p] );
 					}
 			}
 		}
 
-		$isMatch = preg_match( '/^\p{Z}*' . $pattern . '$/iu', $value, $matches );
-		// if ( $isMatch ) { var_dump( $matches ); die(); }
+		$isMatch = preg_match( '<^\p{Z}*' . $pattern . '$>iu', $value, $matches );
 		if ( $isMatch && isset( $matches['year'] ) ) {
 			$precision = TimeValue::PRECISION_YEAR;
-			$time = array( $this->normalizeNumber( $matches['year'] ), 0, 0, 0, 0, 0 );
+			$time = array( $this->parseFormattedNumber( $matches['year'] ), 0, 0, 0, 0, 0 );
 
-			// if ( $value === '05:42, 4. Mär. 1201' ) { var_dump( $matches ); die(); }
 			if ( isset( $matches['month'] ) ) {
 				$precision = TimeValue::PRECISION_MONTH;
 				$time[1] = $this->findMonthMatch( $matches );
@@ -135,32 +130,45 @@ class DateFormatParser extends StringValueParser {
 
 			if ( isset( $matches['day'] ) ) {
 				$precision = TimeValue::PRECISION_DAY;
-				$time[2] = $this->normalizeNumber( $matches['day'] );
+				$time[2] = $this->parseFormattedNumber( $matches['day'] );
 			}
 
 			if ( isset( $matches['hour'] ) ) {
 				$precision = TimeValue::PRECISION_HOUR;
-				$time[3] = $this->normalizeNumber( $matches['hour'] );
+				$time[3] = $this->parseFormattedNumber( $matches['hour'] );
 			}
 
 			if ( isset( $matches['minute'] ) ) {
 				$precision = TimeValue::PRECISION_MINUTE;
-				$time[4] = $this->normalizeNumber( $matches['minute'] );
+				$time[4] = $this->parseFormattedNumber( $matches['minute'] );
 			}
 
 			if ( isset( $matches['second'] ) ) {
 				$precision = TimeValue::PRECISION_SECOND;
-				$time[5] = $this->normalizeNumber( $matches['second'] );
+				$time[5] = $this->parseFormattedNumber( $matches['second'] );
 			}
 
-			// TODO: Check for Int32 overflows.
 			$timestamp = vsprintf( '%+.0f-%02d-%02dT%02d:%02d:%02dZ', $time );
-			// if ( $month[0] === 'M' && $i === 3 ) { var_dump( $month, $regex, preg_match( $regex, $month ) ); die(); }
 			return new TimeValue( $timestamp, 0, 0, 0, $precision, TimeValue::CALENDAR_GREGORIAN );
 		}
 
 		throw new ParseException( "Failed to parse $value ("
-			. $this->parseFormattedNumber( $value ) . ')'.$pattern, $value );
+			. $this->parseFormattedNumber( $value ) . ')', $value );
+	}
+
+	/**
+	 * @return string
+	 */
+	private function getMonthNamesPattern() {
+		$pattern = '';
+
+		foreach ( $this->getMonthNames() as $i => $monthNames ) {
+			$pattern .= '|(?P<month' . $i . '>'
+				. implode( '|', array_map( 'preg_quote', (array)$monthNames ) )
+				. ')';
+		}
+
+		return $pattern;
 	}
 
 	/**
@@ -175,40 +183,7 @@ class DateFormatParser extends StringValueParser {
 			}
 		}
 
-		return $this->normalizeMonth( $matches['month'] );
-	}
-
-	/**
-	 * @param string $month
-	 *
-	 * @return int
-	 */
-	private function normalizeMonth( $month ) {
-		foreach ( $this->getMonthNames() as $i => $monthNames ) {
-			$pattern = '/^\p{Z}*('
-				. implode( '|', array_map(
-					function( $monthName ) {
-						return preg_quote( preg_replace( '/\p{P}+$/u', '', $monthName ), '/' );
-					}, $monthNames
-				) )
-				. ')[\p{P}\p{Z}]*$/iu';
-
-			if ( preg_match( $pattern, $month ) ) {
-				return $i;
-			}
-		}
-
-		return $this->normalizeNumber( $month );
-	}
-
-	/**
-	 * @param string $number
-	 *
-	 * @return double
-	 */
-	private function normalizeNumber( $number ) {
-		$number = $this->parseFormattedNumber( $number );
-		return doubleval( preg_replace( '/\D+/s', '', $number ) );
+		return $this->parseFormattedNumber( $matches['month'] );
 	}
 
 	/**
@@ -232,12 +207,11 @@ class DateFormatParser extends StringValueParser {
 	 * @return string
 	 */
 	private function getNumberCharacters() {
-		// TODO: Should there be a relaxed mode with \p{N} instead of \d?
 		$numberCharacters = '\d';
 
 		$transformTable = $this->getDigitTransformTable();
 		if ( is_array( $transformTable ) ) {
-			$numberCharacters .= preg_quote( implode( '', $transformTable ), '/' );
+			$numberCharacters .= preg_quote( implode( '', $transformTable ) );
 		}
 
 		return $numberCharacters;
