@@ -32,9 +32,16 @@ class YearMonthDayTimeParserTest extends StringValueParserTest {
 	 * @return YearMonthDayTimeParser
 	 */
 	protected function getInstance() {
-		return new YearMonthDayTimeParser(
-			new EraParser()
-		);
+		return $this->getYearMonthDayTimeParser();
+	}
+
+	/**
+	 * @param int[] $months
+	 *
+	 * @return YearMonthDayTimeParser
+	 */
+	private function getYearMonthDayTimeParser( array $months = array() ) {
+		return new YearMonthDayTimeParser( new EraParser(), $months );
 	}
 
 	/**
@@ -183,6 +190,63 @@ class YearMonthDayTimeParserTest extends StringValueParserTest {
 		}
 
 		return $cases;
+	}
+
+	/**
+	 * @dataProvider monthNamesProvider
+	 */
+	public function testMonthNameParsing( $value, array $months, TimeValue $expected ) {
+		$parser = $this->getYearMonthDayTimeParser( $months );
+		$this->assertTrue( $expected->equals( $parser->parse( $value ) ) );
+	}
+
+	public function monthNamesProvider() {
+		$gregorian = 'http://www.wikidata.org/entity/Q1985727';
+		$julian = 'http://www.wikidata.org/entity/Q1985786';
+
+		$valid = array(
+			'13.12.1999' => array(
+				array(),
+				'+1999-12-13T00:00:00Z',
+			),
+			'13. February 1999' => array(
+				array( 'February' => 2 ),
+				'+1999-02-13T00:00:00Z',
+			),
+		);
+
+		$cases = array();
+
+		foreach ( $valid as $value => $args ) {
+			$months = $args[0];
+			$timestamp = $args[1];
+			$calendarModel = isset( $args[2] ) ? $args[2] : $gregorian;
+
+			$cases[] = array(
+				(string)$value,
+				$months,
+				new TimeValue( $timestamp, 0, 0, 0, TimeValue::PRECISION_DAY, $calendarModel )
+			);
+		}
+
+		return $cases;
+	}
+
+	/**
+	 * @dataProvider invalidMonthNamesProvider
+	 */
+	public function testInvalidMonthNameParsing( $value, array $months ) {
+		$parser = $this->getYearMonthDayTimeParser( $months );
+		$this->setExpectedException( 'ValueParsers\ParseException' );
+		$parser->parse( $value );
+	}
+
+	public function invalidMonthNamesProvider() {
+		return array(
+			array( '13. February 1999', array() ),
+			array( 'February. February 1999', array( 'February' => 2 ) ),
+			array( '13. Feb 1999', array( 'February' => 2 ) ),
+		);
 	}
 
 }
